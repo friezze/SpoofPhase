@@ -30,10 +30,9 @@ from preprocess import load_canonical
 from gradcam import GradCAM
 from plots import plot_features_panel
 
-
 def filter_bandpass(features):
     mask = torch.ones_like(features)
-    mask[:, :, :2, :] = 0 
+    mask[:, :, :2, :] = 0
     mask[:, :, 120:, :] = 0
     return features * mask
 
@@ -55,6 +54,23 @@ def filter_spec_augment(features):
     features_clone = features.clone()
     features_clone[:, :, f_idx:f_idx+15, :] = 0
     return features_clone
+
+def adaptive_fix_group_delay(gd: np.ndarray) -> np.ndarray:
+    """Рангова трансформація (Histogram Equalization). Гарантує 100% контраст."""
+    shape = gd.shape
+    gd_flat = gd.flatten()
+
+    # Додаємо мікрошум, щоб нулі (тиша) не злипалися в одну монохромну пляму
+    noise = np.random.normal(0, 1e-6, size=gd_flat.shape)
+    gd_noisy = gd_flat + noise
+
+    # Сортування індексів двічі дає ранг кожного елемента
+    ranks = np.argsort(np.argsort(gd_noisy))
+
+    # Нормалізуємо ранги від 0.0 до 1.0
+    gd_eq = ranks.astype(np.float32) / (len(gd_noisy) - 1.0)
+
+    return gd_eq.reshape(shape)
 
 ui_filters = {
     "bandpass": filter_bandpass,
@@ -119,23 +135,31 @@ class InferenceEngine:
 
     def predict_path(self, audio_path: str | Path, run_gradcam: bool = True, active_filter: str = "") -> InferenceResult:
         wav = load_canonical(audio_path)
-        
+
         try:
             mel, gd, _, _ = get_audio_features(str(audio_path))
-            
+
+            # --- РОЗДІЛЕННЯ ЛОГІКИ ---
+            # 1. Створюємо контрастну копію GD спеціально для малювання
+            gd_vis = adaptive_fix_group_delay(gd.copy())
+
+            # 2. Готуємо GD для моделі так, як вона вчилася (кліпінг 1-99%)
             lower_bound = np.percentile(gd, 1)
             upper_bound = np.percentile(gd, 99)
-            gd = np.clip(gd, lower_bound, upper_bound)
-            
-            feat_full = torch.from_numpy(stack_features(mel, gd))
-            
+            gd_model = np.clip(gd, lower_bound, upper_bound)
+
+            feat_full = torch.from_numpy(stack_features(mel, gd_model))
+            # --------------------------
+
             if active_filter and active_filter in ui_filters:
                 feat_full = feat_full.unsqueeze(0)
                 feat_full = ui_filters[active_filter](feat_full)
                 feat_full = feat_full.squeeze(0)
 
-        except Exception:
+        except Exception as e:
+            logger.error(f"Feature extraction failed: {e}")
             feat_full = torch.zeros((2, 128, self.frame_target))
+            gd_vis = np.zeros((128, self.frame_target))
 
         T_full = feat_full.shape[-1]
         w_size = self.frame_target
@@ -197,18 +221,17 @@ class InferenceEngine:
                 w = gradcam_weights[h.name]
                 w[w == 0] = 1.0
                 avg_cam = gradcam_accum[h.name] / w
-                
+
                 c_min, c_max = avg_cam.min(), avg_cam.max()
                 if c_max > c_min:
                     avg_cam = (avg_cam - c_min) / (c_max - c_min)
-                
+
                 if T_full < w_size:
                     avg_cam = avg_cam[:, :T_full]
-                    
+
                 final_cams[h.name] = avg_cam.cpu().numpy()
 
         mel_out = feat_full[0].numpy()
-        gd_out = feat_full[1].numpy()
 
         return InferenceResult(
             file=str(audio_path),
@@ -219,9 +242,9 @@ class InferenceEngine:
             intermediates={
                 "waveform": wav,
                 "mel_db": mel_out,
-                "group_delay": gd_out,
+                "group_delay": gd_vis,  # Використовуємо адаптовану версію для графіків
                 "mel_db_cropped": mel_out,
-                "group_delay_cropped": gd_out,
+                "group_delay_cropped": gd_vis,
                 **{f"gradcam_{k}": v for k, v in final_cams.items()},
             },
         )
@@ -236,7 +259,7 @@ def _load_engine():
         logger.info(f"Завантаження конфігу: {INFER_CONFIG}")
         cfg = load_infer_config(INFER_CONFIG)
         engine = InferenceEngine(cfg)
-        
+
         for handle in engine.handles:
             try:
                 param = next(handle.module.parameters())
@@ -270,15 +293,15 @@ HTML = """
   header h1 { font-size: 1.5rem; font-weight: 700; color: #fff; }
   header span { font-size: 0.85rem; color: #888; }
   .container { max-width: 960px; margin: 40px auto; padding: 0 20px; }
-  
+
   .upload-zone { border: 2px dashed #3d4268; border-radius: 16px; padding: 48px; text-align: center; cursor: pointer; transition: all 0.2s; background: #1a1d27; }
   .upload-zone:hover, .upload-zone.drag { border-color: #6c7bff; background: #1e2236; }
   .upload-zone input { display: none; }
   .upload-zone .icon { font-size: 3rem; margin-bottom: 12px; }
   .upload-zone p { color: #888; margin-top: 8px; font-size: 0.9rem; }
-  
+
   .file-status { text-align: center; margin-top: 16px; font-size: 1.1rem; color: #2ecc71; font-weight: bold; display: none; }
-  
+
   .filters-section { background: #1a1d27; border: 1px solid #2d3148; border-radius: 12px; padding: 20px; margin-top: 24px; }
   .filters-section h3 { font-size: 1rem; color: #aaa; margin-bottom: 16px; text-transform: uppercase; letter-spacing: 0.05em; }
   .filter-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
@@ -290,12 +313,12 @@ HTML = """
   .btn { display: inline-block; padding: 12px 32px; background: #6c7bff; color: #fff; border: none; border-radius: 8px; font-size: 1rem; cursor: pointer; transition: background 0.2s; font-weight: 600; }
   .btn:hover { background: #5a6aee; }
   .btn:disabled { background: #3d4268; color: #888; cursor: not-allowed; }
-  
+
   .record-btn { background: #1a1d27; border: 1px solid #e74c3c; border-radius: 8px; color: #e74c3c; }
   .record-btn:hover { background: #e74c3c; color: #fff; }
   .record-btn.recording { background: #e74c3c; color: #fff; animation: pulse 1.5s infinite; }
   @keyframes pulse { 0% { transform: scale(1); } 50% { transform: scale(1.05); } 100% { transform: scale(1); } }
-  
+
   .result { margin-top: 32px; display: none; }
   .verdict { padding: 24px; border-radius: 12px; margin-bottom: 24px; display: flex; align-items: center; gap: 20px; }
   .verdict.spoof { background: #2d1a1a; border: 1px solid #c0392b; }
@@ -341,7 +364,7 @@ HTML = """
 </header>
 
 <div class="container">
-  
+
   <div class="upload-zone" id="dropZone" onclick="document.getElementById('fileInput').click()">
     <div class="icon">🎵</div>
     <p style="font-size:1.1rem;color:#ccc;">Перетягни WAV файл або клікни сюди</p>
@@ -419,7 +442,7 @@ function setReadyFile(file) {
   document.getElementById('fileName').textContent = file.name;
   document.getElementById('fileStatus').style.display = 'block';
   analyzeBtn.disabled = false;
-  
+
   document.getElementById('result').style.display = 'none';
   document.getElementById('error').style.display = 'none';
   document.getElementById('featuresImg').src = '';
@@ -433,8 +456,8 @@ dropZone.addEventListener('drop', e => {
   if (e.dataTransfer.files[0]) setReadyFile(e.dataTransfer.files[0]);
 });
 
-fileInput.addEventListener('change', () => { 
-  if (fileInput.files[0]) setReadyFile(fileInput.files[0]); 
+fileInput.addEventListener('change', () => {
+  if (fileInput.files[0]) setReadyFile(fileInput.files[0]);
 });
 
 async function toggleRecord() {
@@ -464,10 +487,10 @@ async function toggleRecord() {
 
 function runAnalysis() {
   if (!currentFile) return;
-  
+
   const formData = new FormData();
   formData.append('audio', currentFile);
-  
+
   const selectedFilter = document.querySelector('input[name="filter_mode"]:checked').value;
   formData.append('filter', selectedFilter);
 
@@ -572,7 +595,7 @@ def predict():
     f = request.files["audio"]
     if not f.filename:
         return jsonify({"error": "порожній файл"}), 400
-        
+
     active_filter = request.form.get("filter", "")
 
     try:
@@ -590,7 +613,7 @@ def predict():
         result = eng.predict_path(tmp_path, run_gradcam=True, active_filter=active_filter)
         for m in result.per_model:
             logger.info(f"Модель {m['model']} -> Prob: {m['spoof_probability']:.4f}, Decision: {m['decision']}")
-            
+
     except Exception as e:
         logger.error(f"помилка аналізу: {e}")
         tmp_path.unlink(missing_ok=True)

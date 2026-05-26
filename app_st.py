@@ -1,3 +1,4 @@
+"""Web UI для детекції deepfake аудіо та Programmatic inference helpers."""
 from __future__ import annotations
 
 import base64
@@ -33,7 +34,7 @@ st.set_page_config(page_title="SpoofPhase — Deepfake Audio Detector", layout="
 
 def filter_bandpass(features):
     mask = torch.ones_like(features)
-    mask[:, :, :2, :] = 0 
+    mask[:, :, :2, :] = 0
     mask[:, :, 120:, :] = 0
     return features * mask
 
@@ -55,6 +56,29 @@ def filter_spec_augment(features):
     features_clone = features.clone()
     features_clone[:, :, f_idx:f_idx+15, :] = 0
     return features_clone
+
+def adaptive_fix_group_delay(gd: np.ndarray) -> np.ndarray:
+    """
+    Нормалізація карти групової затримки (n_mels, T) → [0, 1].
+
+    Стара реалізація (глобальний MAD) давала монохромну картинку:
+    при std~1000 діапазон 5*MAD виходив ~[-750, 750], і нормальні
+    значення в [-100, 100] всі стискались у вузьку смугу [0.43, 0.57].
+
+    Виправлення: per-row percentile normalization — кожен mel-рядок
+    незалежно розтягується від свого p2 до p98, тому жоден рядок
+    не може «заразити» інші своїми викидами.
+    """
+    out = np.empty_like(gd, dtype=np.float32)
+    for i in range(gd.shape[0]):
+        row = gd[i]
+        p2, p98 = np.percentile(row, [2, 98])
+        span = p98 - p2
+        if span > 1e-6:
+            out[i] = np.clip((row - p2) / span, 0.0, 1.0)
+        else:
+            out[i] = 0.5   # рядок без інформації → нейтральне значення
+    return out
 
 ui_filters = {
     "bandpass": filter_bandpass,
@@ -118,16 +142,14 @@ class InferenceEngine:
 
     def predict_path(self, audio_path: str | Path, run_gradcam: bool = True, active_filter: str = "") -> InferenceResult:
         wav = load_canonical(audio_path)
-        
+
         try:
             mel, gd, _, _ = get_audio_features(str(audio_path))
-            
-            lower_bound = np.percentile(gd, 1)
-            upper_bound = np.percentile(gd, 99)
-            gd = np.clip(gd, lower_bound, upper_bound)
-            
+
+            gd = adaptive_fix_group_delay(gd)
+
             feat_full = torch.from_numpy(stack_features(mel, gd))
-            
+
             if active_filter and active_filter in ui_filters:
                 feat_full = feat_full.unsqueeze(0)
                 feat_full = ui_filters[active_filter](feat_full)
@@ -167,7 +189,7 @@ class InferenceEngine:
                     spoof_p = float(probs[0, 1])
                 per_model_scores[h.name].append(spoof_p)
 
-                if run_gradcam sheeting and h.weights_path and Path(h.weights_path).exists():
+                if run_gradcam and h.weights_path and Path(h.weights_path).exists():
                     try:
                         cam = GradCAM(h.module).explain(tensor, target_class=1)
                         if isinstance(cam, np.ndarray):
@@ -196,14 +218,14 @@ class InferenceEngine:
                 w = gradcam_weights[h.name]
                 w[w == 0] = 1.0
                 avg_cam = gradcam_accum[h.name] / w
-                
+
                 c_min, c_max = avg_cam.min(), avg_cam.max()
                 if c_max > c_min:
                     avg_cam = (avg_cam - c_min) / (c_max - c_min)
-                
+
                 if T_full < w_size:
                     avg_cam = avg_cam[:, :T_full]
-                    
+
                 final_cams[h.name] = avg_cam.cpu().numpy()
 
         mel_out = feat_full[0].numpy()
@@ -232,7 +254,7 @@ def _load_engine():
     logger.info(f"Завантаження конфігу: {INFER_CONFIG}")
     cfg = load_infer_config(INFER_CONFIG)
     engine_obj = InferenceEngine(cfg)
-    
+
     for handle in engine_obj.handles:
         try:
             param = next(handle.module.parameters())
@@ -308,7 +330,7 @@ if analyze_btn and active_file:
     verdict_style = "background: #2d1a1a; border: 1px solid #c0392b;" if is_spoof else "background: #1a2d1a; border: 1px solid #27ae60;"
     verdict_icon = "🚨" if is_spoof else "✅"
     verdict_label = "DEEPFAKE" if is_spoof else "СПРАВЖНІЙ ГОЛОС"
-    label_color = "#e74c3c" if is_spoof else #2ecc71"
+    label_color = "#e74c3c" if is_spoof else "#2ecc71"
 
     st.markdown(f"""
     <div style="{verdict_style} padding: 24px; border-radius: 12px; margin-bottom: 24px; display: flex; align-items: center; gap: 20px;">
@@ -387,7 +409,7 @@ if analyze_btn and active_file:
             {"label": "Mel важл.", "value": max(0, ablation["mel_importance"]), "color": "#2ecc71"},
             {"label": "GD важл.", "value": max(0, ablation["gd_importance"]), "color": "#1abc9c"},
         ]
-        
+
         bars_html = '<div style="display: flex; gap: 16px; align-items: flex-end; height: 120px; background: #1a1d27; padding: 20px; border-radius: 12px; border: 1px solid #2d3148; margin-bottom: 24px;">'
         for item in items:
             h = round(item["value"] * 80)

@@ -105,3 +105,4 @@ urllib3==2.5.0
 uvicorn==0.47.0
 websocket-client==1.9.0
 Werkzeug==3.1.8
+streamlit
