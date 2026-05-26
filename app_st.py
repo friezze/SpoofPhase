@@ -410,20 +410,19 @@ if analyze_btn and active_file:
             {"label": "GD важл.", "value": max(0, ablation["gd_importance"]), "color": "#1abc9c"},
         ]
 
-        bars_html = '<div style="display: flex; gap: 16px; align-items: flex-end; height: 120px; background: #1a1d27; padding: 20px; border-radius: 12px; border: 1px solid #2d3148; margin-bottom: 24px;">'
-        for item in items:
+        abl_cols = st.columns(len(items))
+        for idx, item in enumerate(items):
             h = round(item["value"] * 80)
-            bars_html += f"""
-            <div style="flex: 1; display: flex; flex-direction: column; align-items: center; gap: 6px;">
-                <div style="font-size: 0.9rem; font-weight: 600; color: #fff;">{item['value'] * 100:.1f}%</div>
-                <div style="width: 100%; background: #2d3148; border-radius: 6px; height: 80px; display: flex; align-items: flex-end; overflow: hidden;">
+            col_html = f"""
+            <div style="background: #1a1d27; border: 1px solid #2d3148; border-radius: 10px; padding: 12px; display: flex; flex-direction: column; align-items: center; margin-bottom: 16px;">
+                <div style="font-size: 1.1rem; font-weight: 700; color: #fff; margin-bottom: 8px;">{item['value'] * 100:.1f}%</div>
+                <div style="width: 100%; max-width: 60px; background: #2d3148; border-radius: 6px; height: 80px; display: flex; align-items: flex-end; overflow: hidden; margin-bottom: 8px;">
                     <div style="width: 100%; border-radius: 6px; height: {h}px; background: {item['color']};"></div>
                 </div>
-                <div style="font-size: 0.75rem; color: #888;">{item['label']}</div>
+                <div style="font-size: 0.75rem; color: #888; text-align: center;">{item['label']}</div>
             </div>
             """
-        bars_html += '</div>'
-        st.markdown(bars_html, unsafe_allow_html=True)
+            abl_cols[idx].markdown(col_html, unsafe_allow_html=True)
 
     st.markdown("### Детальний аналіз (Фічі та Grad-CAM)")
     st.pyplot(fig)
