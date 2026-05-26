@@ -1,0 +1,46 @@
+# train_phase_aware.yaml
+# PhaseAwareDualStream — підкручений конфіг для кращої збіжності.
+# Dual-stream cross-attention потребує нижчого lr і довшого warmup
+# ніж прості CNN моделі.
+
+seed: 42
+device: cuda
+
+dataset:
+  manifest_train: ./data/manifests/train.csv
+  manifest_val:   ./data/manifests/replaydf.csv
+  features_root:  ./data/features/train
+  features_root_val:  ./data/features/replaydf
+  frame_target:   400
+
+augment:
+  spec_mask_time:  40    # сильніше ніж у baseline
+  spec_mask_freq:  16
+  spec_mask_num:    3
+
+feature:
+  sample_rate: 16000
+  n_fft:       1024
+  hop_length:  256
+  n_mels:      128
+
+model:
+  name:         phase_aware
+  in_channels:  2
+  num_classes:  2
+  stem_channels: 64    # більше каналів в стемах
+  fuse_dim:     128
+
+optim:
+  epochs:          40        # більше епох ніж baseline (30)
+  batch_size:      32        # менший batch — краще для attention
+  lr:              3.0e-4    # нижчий lr ніж CNN baseline (1e-3)
+  weight_decay:    1.0e-4
+  label_smoothing: 0.05
+  scheduler:       cosine
+  warmup_epochs:   5         # довший warmup для transformer
+
+logging:
+  out_dir:    ./checkpoints/phase_aware
+  log_every:  50
+  save_every:  5

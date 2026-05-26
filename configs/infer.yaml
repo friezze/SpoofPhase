@@ -1,0 +1,23 @@
+# configs/infer.yaml
+# Конфіг для веб-UI і spoof-infer CLI
+# weights — шлях до best.pt після тренування
+
+device: cpu        # або cuda якщо є GPU
+frame_target: 400  # має збігатись з тренувальним конфігом
+
+models:
+  - name: lcnn
+    weights: ./checkpoints/lcnn/last.pt
+    description: "LCNN baseline (Lavrentyeva et al.)"
+
+  - name: se_resnet18
+    weights: ./checkpoints/se_resnet18/last.pt
+    description: "SE-ResNet-18 з channel attention"
+
+  - name: aasist_lite
+    weights: ./checkpoints/aasist_lite/last.pt
+    description: "AASIST-lite з graph attention"
+
+  - name: phase_aware
+    weights: ./checkpoints/phase_aware/last.pt
+    description: "PhaseAware DualStream (наша модель)"

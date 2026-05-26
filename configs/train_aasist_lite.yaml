@@ -1,0 +1,42 @@
+# train_lcnn.yaml
+# Запуск: python train_model.py configs/train_lcnn.yaml
+
+seed: 42
+device: cuda   # або cpu якщо нема GPU
+
+dataset:
+  manifest_train: ./data/manifests/train.csv
+  manifest_val:   ./data/manifests/replaydf.csv   # валідація на replaydf
+  features_root:  ./data/features/train
+  features_root_val:  ./data/features/replaydf
+  frame_target:   400                              # ~4 сек при hop=256, sr=16k
+
+augment:
+  spec_mask_time:  30
+  spec_mask_freq:  12
+  spec_mask_num:    2
+
+feature:
+  sample_rate: 16000
+  n_fft:       1024
+  hop_length:  256
+  n_mels:      128
+
+model:
+  name:        aasist_lite       # lcnn | se_resnet18 | aasist_lite | phase_aware
+  in_channels: 2
+  num_classes: 2
+
+optim:
+  epochs:          30
+  batch_size:      64
+  lr:              1.0e-3
+  weight_decay:    1.0e-4
+  label_smoothing: 0.05
+  scheduler:       cosine
+  warmup_epochs:   2
+
+logging:
+  out_dir:    ./checkpoints/aasist_lite
+  log_every:  50
+  save_every:  5
