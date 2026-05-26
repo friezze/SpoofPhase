@@ -2,7 +2,7 @@
 
 Файл лежить поруч з папкою data/ і рештою скриптів:
     code/
-    ├── prepare_data.py   <- цей файл
+    ├── prepare_data.py   
     ├── compression.py
     ├── features.py
     ├── manifests.py
